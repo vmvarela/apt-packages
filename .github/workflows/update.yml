@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Release version (without v, e.g. 0.3.0)"
+        description: "Release version (without v, e.g. 0.7.0)"
         required: true
 
 concurrency:
@@ -40,9 +40,9 @@ jobs:
         run: |
           VERSION="${{ steps.vars.outputs.version }}"
           mkdir -p site/pool/main/s/sql-pipe
-          # nfpm GOARCH names: amd64, arm64, arm7, 386
-          for GOARCH in amd64 arm64 arm7 386; do
-            FILE="sql-pipe_${VERSION}_linux_${GOARCH}.deb"
+          # nfpm Debian arch names: amd64, arm64, armhf, i386
+          for APT_ARCH in amd64 arm64 armhf i386; do
+            FILE="sql-pipe_${VERSION}_${APT_ARCH}.deb"
             URL="https://github.com/vmvarela/sql-pipe/releases/download/v${VERSION}/${FILE}"
             if curl -fsSL "${URL}" -o "site/pool/main/s/sql-pipe/${FILE}" 2>/dev/null; then
               echo "Downloaded ${FILE}"
@@ -58,19 +58,17 @@ jobs:
           cd site
 
           # Generate combined Packages index from all .deb files
-          mkdir -p /tmp/apt-all
-          apt-ftparchive packages pool/main/s/sql-pipe/ > /tmp/apt-all/Packages
+          apt-ftparchive packages pool/main/s/sql-pipe/ > /tmp/Packages.all
+          echo "==> Packages:"
+          cat /tmp/Packages.all
 
-          echo "==> All packages:"
-          cat /tmp/apt-all/Packages
-
-          # Split Packages by architecture into per-arch directories
+          # Split into per-arch directories
           for APT_ARCH in amd64 arm64 armhf i386; do
             mkdir -p "dists/stable/main/binary-${APT_ARCH}"
             awk -v arch="${APT_ARCH}" \
               'BEGIN{RS="";ORS="\n\n"} $0 ~ "Architecture: "arch"(\n|$)"' \
-              /tmp/apt-all/Packages \
-              | head -c -1 > "dists/stable/main/binary-${APT_ARCH}/Packages"
+              /tmp/Packages.all \
+              | sed 's/[[:space:]]*$//' > "dists/stable/main/binary-${APT_ARCH}/Packages"
             gzip -k "dists/stable/main/binary-${APT_ARCH}/Packages"
           done
 
@@ -85,7 +83,6 @@ jobs:
             -o APT::FTPArchive::Release::Components=main \
             -o "APT::FTPArchive::Release::Description=vmvarela APT repository" \
             release dists/stable > dists/stable/Release
-
           echo "==> Release:"
           cat dists/stable/Release
 
@@ -98,19 +95,12 @@ jobs:
             echo "::warning::GPG_SIGNING_KEY not set — repository will be unsigned"
             exit 0
           fi
-
           echo "${GPG_SIGNING_KEY}" | gpg --batch --import
-
-          # Export public key for end users
           gpg --armor --export "${GPG_KEY_ID}" > site/key.gpg
-
-          # Detached signature
           gpg --batch --yes --pinentry-mode loopback \
             --default-key "${GPG_KEY_ID}" \
             --detach-sign --armor \
             -o site/dists/stable/Release.gpg site/dists/stable/Release
-
-          # Inline-signed InRelease
           gpg --batch --yes --pinentry-mode loopback \
             --default-key "${GPG_KEY_ID}" \
             --clearsign \
@@ -121,10 +111,7 @@ jobs:
           cat > site/index.html << 'HTML'
           <!DOCTYPE html>
           <html lang="en">
-          <head>
-            <meta charset="utf-8">
-            <title>vmvarela APT repository</title>
-          </head>
+          <head><meta charset="utf-8"><title>vmvarela APT repository</title></head>
           <body>
           <h1>vmvarela APT repository</h1>
           <h2>Installation</h2>
@@ -135,10 +122,6 @@ jobs:
             | sudo tee /etc/apt/sources.list.d/vmvarela.list
           sudo apt update &amp;&amp; sudo apt install sql-pipe
           </pre>
-          <h2>Packages</h2>
-          <ul>
-            <li><a href="https://github.com/vmvarela/sql-pipe">sql-pipe</a> — Read CSV from stdin, query with SQL, write CSV to stdout</li>
-          </ul>
           </body>
           </html>
           HTML
