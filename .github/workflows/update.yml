@@ -1,0 +1,153 @@
+name: Update APT Repository
+
+on:
+  repository_dispatch:
+    types: [update-sql-pipe]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version (without v, e.g. 0.3.0)"
+        required: true
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build-and-deploy:
+    name: Build and deploy APT repository
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    permissions:
+      pages: write
+      id-token: write
+
+    steps:
+      - name: Install tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y apt-utils gnupg
+
+      - name: Resolve version
+        id: vars
+        run: |
+          VERSION="${{ github.event.client_payload.version || github.event.inputs.version }}"
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+
+      - name: Download .deb packages
+        run: |
+          VERSION="${{ steps.vars.outputs.version }}"
+          mkdir -p site/pool/main/s/sql-pipe
+          # nfpm GOARCH names: amd64, arm64, arm7, 386
+          for GOARCH in amd64 arm64 arm7 386; do
+            FILE="sql-pipe_${VERSION}_linux_${GOARCH}.deb"
+            URL="https://github.com/vmvarela/sql-pipe/releases/download/v${VERSION}/${FILE}"
+            if curl -fsSL "${URL}" -o "site/pool/main/s/sql-pipe/${FILE}" 2>/dev/null; then
+              echo "Downloaded ${FILE}"
+            else
+              echo "Skipped ${FILE} (not available)"
+            fi
+          done
+          ls -la site/pool/main/s/sql-pipe/
+
+      - name: Generate APT index
+        run: |
+          VERSION="${{ steps.vars.outputs.version }}"
+          cd site
+
+          # Generate combined Packages index from all .deb files
+          mkdir -p /tmp/apt-all
+          apt-ftparchive packages pool/main/s/sql-pipe/ > /tmp/apt-all/Packages
+
+          echo "==> All packages:"
+          cat /tmp/apt-all/Packages
+
+          # Split Packages by architecture into per-arch directories
+          for APT_ARCH in amd64 arm64 armhf i386; do
+            mkdir -p "dists/stable/main/binary-${APT_ARCH}"
+            awk -v arch="${APT_ARCH}" \
+              'BEGIN{RS="";ORS="\n\n"} $0 ~ "Architecture: "arch"(\n|$)"' \
+              /tmp/apt-all/Packages \
+              | head -c -1 > "dists/stable/main/binary-${APT_ARCH}/Packages"
+            gzip -k "dists/stable/main/binary-${APT_ARCH}/Packages"
+          done
+
+          # Generate Release file
+          apt-ftparchive \
+            -o APT::FTPArchive::Release::Origin=vmvarela \
+            -o APT::FTPArchive::Release::Label=vmvarela \
+            -o APT::FTPArchive::Release::Suite=stable \
+            -o APT::FTPArchive::Release::Codename=stable \
+            -o APT::FTPArchive::Release::Version="${VERSION}" \
+            -o APT::FTPArchive::Release::Architectures="amd64 arm64 armhf i386" \
+            -o APT::FTPArchive::Release::Components=main \
+            -o "APT::FTPArchive::Release::Description=vmvarela APT repository" \
+            release dists/stable > dists/stable/Release
+
+          echo "==> Release:"
+          cat dists/stable/Release
+
+      - name: Sign Release
+        env:
+          GPG_SIGNING_KEY: ${{ secrets.GPG_SIGNING_KEY }}
+          GPG_KEY_ID: ${{ secrets.GPG_KEY_ID }}
+        run: |
+          if [ -z "${GPG_SIGNING_KEY}" ]; then
+            echo "::warning::GPG_SIGNING_KEY not set — repository will be unsigned"
+            exit 0
+          fi
+
+          echo "${GPG_SIGNING_KEY}" | gpg --batch --import
+
+          # Export public key for end users
+          gpg --armor --export "${GPG_KEY_ID}" > site/key.gpg
+
+          # Detached signature
+          gpg --batch --yes --pinentry-mode loopback \
+            --default-key "${GPG_KEY_ID}" \
+            --detach-sign --armor \
+            -o site/dists/stable/Release.gpg site/dists/stable/Release
+
+          # Inline-signed InRelease
+          gpg --batch --yes --pinentry-mode loopback \
+            --default-key "${GPG_KEY_ID}" \
+            --clearsign \
+            -o site/dists/stable/InRelease site/dists/stable/Release
+
+      - name: Create index page
+        run: |
+          cat > site/index.html << 'HTML'
+          <!DOCTYPE html>
+          <html lang="en">
+          <head>
+            <meta charset="utf-8">
+            <title>vmvarela APT repository</title>
+          </head>
+          <body>
+          <h1>vmvarela APT repository</h1>
+          <h2>Installation</h2>
+          <pre>
+          curl -sSL https://vmvarela.github.io/apt-packages/key.gpg \
+            | sudo tee /etc/apt/keyrings/vmvarela.asc
+          echo "deb [signed-by=/etc/apt/keyrings/vmvarela.asc] https://vmvarela.github.io/apt-packages stable main" \
+            | sudo tee /etc/apt/sources.list.d/vmvarela.list
+          sudo apt update &amp;&amp; sudo apt install sql-pipe
+          </pre>
+          <h2>Packages</h2>
+          <ul>
+            <li><a href="https://github.com/vmvarela/sql-pipe">sql-pipe</a> — Read CSV from stdin, query with SQL, write CSV to stdout</li>
+          </ul>
+          </body>
+          </html>
+          HTML
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site/
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
