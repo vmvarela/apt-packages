@@ -73,6 +73,13 @@ jobs:
             fi
           fi
 
+          for value in "$sql_pipe_version" "$ghoten_version"; do
+            if [[ ! "$value" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "::error::Invalid stable release version: $value"
+              exit 1
+            fi
+          done
+
           echo "target=$target" >> "$GITHUB_OUTPUT"
           echo "sql_pipe_version=$sql_pipe_version" >> "$GITHUB_OUTPUT"
           echo "ghoten_version=$ghoten_version" >> "$GITHUB_OUTPUT"
@@ -113,7 +120,7 @@ jobs:
             exit 1
           fi
 
-          find site/pool -type f -maxdepth 5 -print | sort
+          find site/pool -maxdepth 5 -type f -print | sort
 
       - name: Generate APT index
         run: |
