@@ -2,12 +2,20 @@ name: Update APT Repository
 
 on:
   repository_dispatch:
-    types: [update-sql-pipe]
+    types: [update-sql-pipe, update-ghoten]
   workflow_dispatch:
     inputs:
-      version:
-        description: "Release version (without v, e.g. 0.7.0)"
+      package:
+        description: "Package whose release triggered the rebuild"
         required: true
+        default: sql-pipe
+        type: choice
+        options:
+          - sql-pipe
+          - ghoten
+      version:
+        description: "Release version without v; leave empty to use latest stable"
+        required: false
 
 concurrency:
   group: pages
@@ -30,35 +38,121 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y apt-utils gnupg
 
-      - name: Resolve version
+      - name: Resolve package versions
         id: vars
+        shell: bash
+        env:
+          EVENT_ACTION: ${{ github.event.action }}
+          INPUT_PACKAGE: ${{ github.event.inputs.package }}
+          REQUESTED_VERSION: ${{ github.event.client_payload.version || github.event.inputs.version }}
         run: |
-          VERSION="${{ github.event.client_payload.version || github.event.inputs.version }}"
-          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          set -euo pipefail
 
-      - name: Download .deb packages
-        run: |
-          VERSION="${{ steps.vars.outputs.version }}"
-          mkdir -p site/pool/main/s/sql-pipe
-          # nfpm Debian arch names: amd64, arm64, armhf, i386
-          for APT_ARCH in amd64 arm64 armhf i386; do
-            FILE="sql-pipe_${VERSION}_${APT_ARCH}.deb"
-            URL="https://github.com/vmvarela/sql-pipe/releases/download/v${VERSION}/${FILE}"
-            if curl -fsSL "${URL}" -o "site/pool/main/s/sql-pipe/${FILE}" 2>/dev/null; then
-              echo "Downloaded ${FILE}"
+          latest_version() {
+            curl --fail --silent --show-error \
+              "https://api.github.com/repos/vmvarela/$1/releases/latest" |
+              jq -r '.tag_name' |
+              sed 's/^v//'
+          }
+
+          case "${EVENT_ACTION:-${INPUT_PACKAGE:-}}" in
+            update-sql-pipe|sql-pipe) target="sql-pipe" ;;
+            update-ghoten|ghoten) target="ghoten" ;;
+            *) echo "::error::Unknown package update event."; exit 1 ;;
+          esac
+
+          sql_pipe_version="$(latest_version sql-pipe)"
+          ghoten_version="$(latest_version ghoten)"
+
+          if [[ -n "${REQUESTED_VERSION:-}" ]]; then
+            requested="${REQUESTED_VERSION#v}"
+            if [[ "$target" == "sql-pipe" ]]; then
+              sql_pipe_version="$requested"
             else
-              echo "Skipped ${FILE} (not available)"
+              ghoten_version="$requested"
+            fi
+          fi
+
+          for value in "$sql_pipe_version" "$ghoten_version"; do
+            if [[ ! "$value" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "::error::Invalid stable release version: $value"
+              exit 1
             fi
           done
-          ls -la site/pool/main/s/sql-pipe/
+
+          echo "target=$target" >> "$GITHUB_OUTPUT"
+          echo "sql_pipe_version=$sql_pipe_version" >> "$GITHUB_OUTPUT"
+          echo "ghoten_version=$ghoten_version" >> "$GITHUB_OUTPUT"
+          echo "Rebuilding APT repository: sql-pipe=$sql_pipe_version, ghoten=$ghoten_version"
+
+      - name: Download .deb packages
+        shell: bash
+        env:
+          TARGET: ${{ steps.vars.outputs.target }}
+          SQL_PIPE_VERSION: ${{ steps.vars.outputs.sql_pipe_version }}
+          GHOTEN_VERSION: ${{ steps.vars.outputs.ghoten_version }}
+        run: |
+          set -euo pipefail
+          mkdir -p site/pool/main/s/sql-pipe site/pool/main/g/ghoten
+
+          for arch in amd64 arm64 armhf i386; do
+            file="sql-pipe_${SQL_PIPE_VERSION}_${arch}.deb"
+            curl --fail --silent --show-error --location \
+              "https://github.com/vmvarela/sql-pipe/releases/download/v${SQL_PIPE_VERSION}/${file}" \
+              -o "site/pool/main/s/sql-pipe/${file}"
+          done
+
+          ghoten_count=0
+          for arch in amd64 arm64; do
+            file="ghoten_${GHOTEN_VERSION}_${arch}.deb"
+            if curl --fail --silent --show-error --location \
+              "https://github.com/vmvarela/ghoten/releases/download/v${GHOTEN_VERSION}/${file}" \
+              -o "site/pool/main/g/ghoten/${file}"; then
+              ghoten_count=$((ghoten_count + 1))
+            else
+              rm -f "site/pool/main/g/ghoten/${file}"
+              echo "Ghoten native package not available yet: ${file}"
+            fi
+          done
+
+          deployed_index_has_ghoten() {
+            local APT_ARCH content ok=0
+            for APT_ARCH in amd64 arm64; do
+              content="$(curl --fail --silent --show-error "https://vmvarela.github.io/apt-packages/dists/stable/main/binary-${APT_ARCH}/Packages")" && ok=1
+              [[ "${content#*Package: }" != "$content" ]] && grep -q '^Package: ghoten' <<<"$content" && return 0
+            done
+            if (( ! ok )); then
+              echo '::error::Unable to read the deployed APT repository to check for existing ghoten packages.' >&2
+              exit 1
+            fi
+            return 1
+          }
+
+          if [[ "$ghoten_count" -eq 1 ]]; then
+            echo '::error::Ghoten package set is incomplete; refusing to publish an index missing one of amd64/arm64. Retry once assets are available.'
+            exit 1
+          fi
+
+          if [[ "$ghoten_count" -eq 0 ]]; then
+            if [[ "$TARGET" == "ghoton" ]]; then
+              echo '::error::A Ghoten-triggered rebuild requires both Ghoten DEB packages.'
+              exit 1
+            fi
+            if deployed_index_has_ghoten; then
+              echo '::error::ghoten is already published in the deployed repository; refusing to silently drop it. Retry once assets are reachable.'
+              exit 1
+            fi
+            echo '::notice::Ghoten native packages are not available yet; skipping ghoten'
+          fi
+
+          find site/pool -maxdepth 5 -type f -print | sort
 
       - name: Generate APT index
         run: |
-          VERSION="${{ steps.vars.outputs.version }}"
           cd site
 
-          # Generate combined Packages index from all .deb files
-          apt-ftparchive packages pool/main/s/sql-pipe/ > /tmp/Packages.all
+          # Generate one combined index for every package in the shared repository.
+          apt-ftparchive packages pool/ > /tmp/Packages.all
           echo "==> Packages:"
           cat /tmp/Packages.all
 
@@ -78,7 +172,6 @@ jobs:
             -o APT::FTPArchive::Release::Label=vmvarela \
             -o APT::FTPArchive::Release::Suite=stable \
             -o APT::FTPArchive::Release::Codename=stable \
-            -o APT::FTPArchive::Release::Version="${VERSION}" \
             -o APT::FTPArchive::Release::Architectures="amd64 arm64 armhf i386" \
             -o APT::FTPArchive::Release::Components=main \
             -o "APT::FTPArchive::Release::Description=vmvarela APT repository" \
@@ -91,9 +184,9 @@ jobs:
           GPG_SIGNING_KEY: ${{ secrets.GPG_SIGNING_KEY }}
           GPG_KEY_ID: ${{ secrets.GPG_KEY_ID }}
         run: |
-          if [ -z "${GPG_SIGNING_KEY}" ]; then
-            echo "::warning::GPG_SIGNING_KEY not set — repository will be unsigned"
-            exit 0
+          if [ -z "${GPG_SIGNING_KEY}" ] || [ -z "${GPG_KEY_ID}" ]; then
+            echo "::error::GPG_SIGNING_KEY and GPG_KEY_ID secrets must be configured; refusing to deploy an unsigned repository."
+            exit 1
           fi
           echo "${GPG_SIGNING_KEY}" | gpg --batch --import
           gpg --armor --export "${GPG_KEY_ID}" > site/key.gpg
@@ -120,7 +213,9 @@ jobs:
             | sudo tee /etc/apt/keyrings/vmvarela.asc
           echo "deb [signed-by=/etc/apt/keyrings/vmvarela.asc] https://vmvarela.github.io/apt-packages stable main" \
             | sudo tee /etc/apt/sources.list.d/vmvarela.list
-          sudo apt update &amp;&amp; sudo apt install sql-pipe
+          sudo apt update
+          sudo apt install sql-pipe
+          sudo apt install ghoten
           </pre>
           </body>
           </html>
