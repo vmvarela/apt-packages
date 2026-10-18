@@ -115,9 +115,34 @@ jobs:
             fi
           done
 
-          if [[ "$TARGET" == "ghoten" && "$ghoten_count" -ne 2 ]]; then
-            echo "::error::A Ghoten-triggered rebuild requires both Ghoten DEB packages."
+          deployed_index_has_ghoten() {
+            local APT_ARCH content ok=0
+            for APT_ARCH in amd64 arm64; do
+              content="$(curl --fail --silent --show-error "https://vmvarela.github.io/apt-packages/dists/stable/main/binary-${APT_ARCH}/Packages")" && ok=1
+              [[ "${content#*Package: }" != "$content" ]] && grep -q '^Package: ghoten' <<<"$content" && return 0
+            done
+            if (( ! ok )); then
+              echo '::error::Unable to read the deployed APT repository to check for existing ghoten packages.' >&2
+              exit 1
+            fi
+            return 1
+          }
+
+          if [[ "$ghoten_count" -eq 1 ]]; then
+            echo '::error::Ghoten package set is incomplete; refusing to publish an index missing one of amd64/arm64. Retry once assets are available.'
             exit 1
+          fi
+
+          if [[ "$ghoten_count" -eq 0 ]]; then
+            if [[ "$TARGET" == "ghoton" ]]; then
+              echo '::error::A Ghoten-triggered rebuild requires both Ghoten DEB packages.'
+              exit 1
+            fi
+            if deployed_index_has_ghoten; then
+              echo '::error::ghoten is already published in the deployed repository; refusing to silently drop it. Retry once assets are reachable.'
+              exit 1
+            fi
+            echo '::notice::Ghoten native packages are not available yet; skipping ghoten'
           fi
 
           find site/pool -maxdepth 5 -type f -print | sort
@@ -159,9 +184,9 @@ jobs:
           GPG_SIGNING_KEY: ${{ secrets.GPG_SIGNING_KEY }}
           GPG_KEY_ID: ${{ secrets.GPG_KEY_ID }}
         run: |
-          if [ -z "${GPG_SIGNING_KEY}" ]; then
-            echo "::warning::GPG_SIGNING_KEY not set — repository will be unsigned"
-            exit 0
+          if [ -z "${GPG_SIGNING_KEY}" ] || [ -z "${GPG_KEY_ID}" ]; then
+            echo "::error::GPG_SIGNING_KEY and GPG_KEY_ID secrets must be configured; refusing to deploy an unsigned repository."
+            exit 1
           fi
           echo "${GPG_SIGNING_KEY}" | gpg --batch --import
           gpg --armor --export "${GPG_KEY_ID}" > site/key.gpg
