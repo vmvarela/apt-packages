@@ -38,6 +38,9 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y apt-utils gnupg
 
+      - name: Check out repository
+        uses: actions/checkout@v7
+
       - name: Resolve package versions
         id: vars
         shell: bash
@@ -48,42 +51,13 @@ jobs:
         run: |
           set -euo pipefail
 
-          latest_version() {
-            curl --fail --silent --show-error \
-              "https://api.github.com/repos/vmvarela/$1/releases/latest" |
-              jq -r '.tag_name' |
-              sed 's/^v//'
-          }
-
           case "${EVENT_ACTION:-${INPUT_PACKAGE:-}}" in
             update-sql-pipe|sql-pipe) target="sql-pipe" ;;
             update-ghoten|ghoten) target="ghoten" ;;
             *) echo "::error::Unknown package update event."; exit 1 ;;
           esac
 
-          sql_pipe_version="$(latest_version sql-pipe)"
-          ghoten_version="$(latest_version ghoten)"
-
-          if [[ -n "${REQUESTED_VERSION:-}" ]]; then
-            requested="${REQUESTED_VERSION#v}"
-            if [[ "$target" == "sql-pipe" ]]; then
-              sql_pipe_version="$requested"
-            else
-              ghoten_version="$requested"
-            fi
-          fi
-
-          for value in "$sql_pipe_version" "$ghoten_version"; do
-            if [[ ! "$value" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-              echo "::error::Invalid stable release version: $value"
-              exit 1
-            fi
-          done
-
-          echo "target=$target" >> "$GITHUB_OUTPUT"
-          echo "sql_pipe_version=$sql_pipe_version" >> "$GITHUB_OUTPUT"
-          echo "ghoten_version=$ghoten_version" >> "$GITHUB_OUTPUT"
-          echo "Rebuilding APT repository: sql-pipe=$sql_pipe_version, ghoten=$ghoten_version"
+          bash scripts/update-apt-repository.sh resolve "$target" "${REQUESTED_VERSION:-}"
 
       - name: Download .deb packages
         shell: bash
@@ -93,57 +67,7 @@ jobs:
           GHOTEN_VERSION: ${{ steps.vars.outputs.ghoten_version }}
         run: |
           set -euo pipefail
-          mkdir -p site/pool/main/s/sql-pipe site/pool/main/g/ghoten
-
-          for arch in amd64 arm64 armhf i386; do
-            file="sql-pipe_${SQL_PIPE_VERSION}_${arch}.deb"
-            curl --fail --silent --show-error --location \
-              "https://github.com/vmvarela/sql-pipe/releases/download/v${SQL_PIPE_VERSION}/${file}" \
-              -o "site/pool/main/s/sql-pipe/${file}"
-          done
-
-          ghoten_count=0
-          for arch in amd64 arm64; do
-            file="ghoten_${GHOTEN_VERSION}_${arch}.deb"
-            if curl --fail --silent --show-error --location \
-              "https://github.com/vmvarela/ghoten/releases/download/v${GHOTEN_VERSION}/${file}" \
-              -o "site/pool/main/g/ghoten/${file}"; then
-              ghoten_count=$((ghoten_count + 1))
-            else
-              rm -f "site/pool/main/g/ghoten/${file}"
-              echo "Ghoten native package not available yet: ${file}"
-            fi
-          done
-
-          deployed_index_has_ghoten() {
-            local APT_ARCH content ok=0
-            for APT_ARCH in amd64 arm64; do
-              content="$(curl --fail --silent --show-error "https://vmvarela.github.io/apt-packages/dists/stable/main/binary-${APT_ARCH}/Packages")" && ok=1
-              [[ "${content#*Package: }" != "$content" ]] && grep -q '^Package: ghoten' <<<"$content" && return 0
-            done
-            if (( ! ok )); then
-              echo '::error::Unable to read the deployed APT repository to check for existing ghoten packages.' >&2
-              exit 1
-            fi
-            return 1
-          }
-
-          if [[ "$ghoten_count" -eq 1 ]]; then
-            echo '::error::Ghoten package set is incomplete; refusing to publish an index missing one of amd64/arm64. Retry once assets are available.'
-            exit 1
-          fi
-
-          if [[ "$ghoten_count" -eq 0 ]]; then
-            if [[ "$TARGET" == "ghoton" ]]; then
-              echo '::error::A Ghoten-triggered rebuild requires both Ghoten DEB packages.'
-              exit 1
-            fi
-            if deployed_index_has_ghoten; then
-              echo '::error::ghoten is already published in the deployed repository; refusing to silently drop it. Retry once assets are reachable.'
-              exit 1
-            fi
-            echo '::notice::Ghoten native packages are not available yet; skipping ghoten'
-          fi
+          bash scripts/update-apt-repository.sh download "$TARGET" "$SQL_PIPE_VERSION" "$GHOTEN_VERSION"
 
           find site/pool -maxdepth 5 -type f -print | sort
 
