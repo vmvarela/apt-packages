@@ -137,20 +137,18 @@ download_package() {
   DOWNLOAD_PACKAGE_COUNT=$count
 }
 
-# Fail closed if the deployed index cannot be read and ghoten may be dropped.
+# Fail closed if any deployed index cannot be read and ghoten may be dropped.
 deployed_index_has_ghoten() {
-  local apt_arch content ok=0
+  local apt_arch content
   for apt_arch in amd64 arm64; do
     if content="$(curl --fail --silent --show-error "${SITE_BASE}/dists/stable/main/binary-${apt_arch}/Packages")"; then
-      ok=1
       if grep -q '^Package: ghoten' <<<"$content"; then
         return 0
       fi
+    else
+      die "Unable to read the deployed APT repository (${apt_arch} index) to check for existing ghoten packages."
     fi
   done
-  if (( ! ok )); then
-    die "Unable to read the deployed APT repository to check for existing ghoten packages."
-  fi
   return 1
 }
 

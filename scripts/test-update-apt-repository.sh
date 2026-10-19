@@ -37,6 +37,23 @@ expect_fail() {
   fi
 }
 
+# Like expect_fail, but also requires the error output to match <pattern>.
+expect_fail_msg() {
+  local desc="$1" pattern="$2" out
+  shift 2
+  if out="$("$@" 2>&1)"; then
+    fail=$((fail + 1))
+    echo "FAIL (expected failure): ${desc}"
+    echo "$out" | sed 's/^/    /'
+  elif grep -q "$pattern" <<<"$out"; then
+    pass=$((pass + 1))
+  else
+    fail=$((fail + 1))
+    echo "FAIL (wrong error) for: ${desc} (wanted /${pattern}/)"
+    echo "$out" | sed 's/^/    /'
+  fi
+}
+
 # --- sandbox with stubbed commands -----------------------------------------
 
 SANDBOX="$(mktemp -d)"
@@ -249,8 +266,11 @@ reset_map() { rm -f "$MAP"; : > "$MAP"; }
 reset_map
 stage_full_success
 map_remove "https://api.github.com/repos/vmvarela/sql-pipe/releases/tags/v1.2.3"
+# The release found at tags/v1.2.3 reports tag_name v1.2.4 -> mismatch.
 write_release sql-pipe v1.2.4 sql-requested.json sha256sums.txt
-expect_fail "requested version whose tag differs is rejected" run_resolve sql-pipe 1.2.3
+map_url "https://api.github.com/repos/vmvarela/sql-pipe/releases/tags/v1.2.3" "$FIX/sql-requested.json"
+expect_fail_msg "requested version whose tag differs is rejected" \
+  "does not match expected v1.2.3" run_resolve sql-pipe 1.2.3
 
 # 4. Requested version that does not exist is rejected.
 reset_map
@@ -347,6 +367,16 @@ rm -f "$MAP"
 stage_full_success
 write_release ghoten v2.0.0 ghoten-latest.json sha256sums.txt
 expect_fail "unreachable deployed index fails closed" run_download sql-pipe 1.2.3 2.0.0
+rm -rf "$WORK/site"
+
+# 13b. One deployed index unreachable, the other reachable without ghoten
+#      -> still fail closed; a single reachable index proves nothing.
+rm -f "$MAP"
+: > "$MAP"
+stage_full_success
+write_release ghoten v2.0.0 ghoten-latest.json sha256sums.txt
+map_deployed_index arm64 "$no_ghoten_index"
+expect_fail "partially unreachable deployed index fails closed" run_download sql-pipe 1.2.3 2.0.0
 rm -rf "$WORK/site"
 
 # 14. Ghoten-triggered rebuild with no ghoten DEBs at all -> fail.
