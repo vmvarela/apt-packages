@@ -62,23 +62,31 @@ FIX="$SANDBOX/fixtures"
 WORK="$SANDBOX/work"
 MAP="$SANDBOX/url-map.tsv"
 CURL_LOG="$SANDBOX/curl.log"
+AUTH_LOG="$SANDBOX/curl-auth.log"
 mkdir -p "$BIN" "$FIX" "$WORK"
 : > "$MAP"
 : > "$CURL_LOG"
+: > "$AUTH_LOG"
 
 cleanup() { rm -rf "$SANDBOX"; }
 trap cleanup EXIT
 
 cat > "$BIN/curl" <<'STUB'
 #!/usr/bin/env bash
-# Serves fixture files mapped in $FAKE_URL_MAP (URL<TAB>path). Exits 22 for
-# unmapped URLs, like curl --fail on HTTP errors.
+# Serves fixture files mapped in $FAKE_URL_MAP (URL<TAB>path[<TAB>status]).
+# Exits 22 for unmapped URLs, like curl --fail on transport/no-response errors.
+# Prints the mapped HTTP status when -w '%{http_code}' is requested.
 set -euo pipefail
-url=""; out=""; location=0
+url=""; out=""; location=0; want_status=0; auth=0
 args=("$@")
 for ((i = 0; i < ${#args[@]}; i++)); do
   case "${args[$i]}" in
     -o) i=$((i + 1)); out="${args[$i]}" ;;
+    -w) i=$((i + 1)); want_status=1 ;;
+    -H|--header)
+      i=$((i + 1))
+      [[ "${args[$i]}" == "Authorization: Bearer "* ]] && auth=1
+      ;;
     --location|-L) location=1 ;;
     -*) ;;
     *) url="${args[$i]}" ;;
@@ -91,15 +99,28 @@ fi
 if [[ -n "${FAKE_CURL_LOG:-}" ]]; then
   printf '%s\n' "$url" >> "$FAKE_CURL_LOG"
 fi
-fixture="$(awk -F '\t' -v u="$url" '$1 == u {print $2; exit}' "${FAKE_URL_MAP:?}")"
-if [[ -z "$fixture" ]]; then
+if [[ -n "${FAKE_CURL_AUTH_LOG:-}" ]]; then
+  if (( auth )); then
+    printf '%s\ttoken\n' "$url" >> "$FAKE_CURL_AUTH_LOG"
+  else
+    printf '%s\tnone\n' "$url" >> "$FAKE_CURL_AUTH_LOG"
+  fi
+fi
+entry="$(awk -F '\t' -v u="$url" '$1 == u {print; exit}' "${FAKE_URL_MAP:?}")"
+if [[ -z "$entry" ]]; then
   echo "stub curl: no fixture for $url" >&2
   exit 22
 fi
+fixture="$(cut -f2 <<<"$entry")"
+status="$(cut -f3 <<<"$entry")"
+status="${status:-200}"
 if [[ -n "$out" ]]; then
   cat "$fixture" > "$out"
 else
   cat "$fixture"
+fi
+if (( want_status )); then
+  printf '%s' "$status"
 fi
 STUB
 
@@ -142,6 +163,13 @@ STUB
 chmod +x "$BIN/curl" "$BIN/dpkg-deb" "$BIN/sha256sum"
 
 map_url() { printf '%s\t%s\n' "$1" "$2" >> "$MAP"; }
+
+# map_error <url> <status> <json-body>: API URL answering with an HTTP error.
+map_error() { # <url> <status> <body>
+  local body="$FIX/http-$2.json"
+  printf '%s\n' "$3" > "$body"
+  printf '%s\t%s\t%s\n' "$1" "$body" "$2" >> "$MAP"
+}
 
 map_remove() { # <url>
   awk -F '\t' -v u="$1" '$1 != u' "$MAP" > "${MAP}.tmp" && mv "${MAP}.tmp" "$MAP"
@@ -209,12 +237,14 @@ map_deployed_index() { # <apt-arch> <fixture-file|""> (empty = unreachable)
 }
 
 run_download() { # <target> <sql-pipe-version> <ghoten-version>
-  (cd "$WORK" && export FAKE_URL_MAP="$MAP" FAKE_FIXTURES="$FIX" FAKE_CURL_LOG="$CURL_LOG" &&
+  (cd "$WORK" && export FAKE_URL_MAP="$MAP" FAKE_FIXTURES="$FIX" FAKE_CURL_LOG="$CURL_LOG" \
+    FAKE_CURL_AUTH_LOG="$AUTH_LOG" GH_TOKEN= &&
     PATH="$BIN:$PATH" bash "$SCRIPT" download "$1" "$2" "$3" .)
 }
 
-run_resolve() { # <target> [requested-version]
-  (cd "$WORK" && export FAKE_URL_MAP="$MAP" FAKE_FIXTURES="$FIX" FAKE_CURL_LOG="$CURL_LOG" &&
+run_resolve() { # <target> [requested-version] [token]
+  (cd "$WORK" && export FAKE_URL_MAP="$MAP" FAKE_FIXTURES="$FIX" FAKE_CURL_LOG="$CURL_LOG" \
+    FAKE_CURL_AUTH_LOG="$AUTH_LOG" GH_TOKEN="${3:-}" &&
     PATH="$BIN:$PATH" bash "$SCRIPT" resolve "$1" "${2:-}")
 }
 
@@ -417,6 +447,61 @@ else
   pass=$((pass + 1))
 fi
 rm -rf "$WORK/site"
+
+# 18. A supplied token authenticates release API requests and is never printed.
+reset_map
+stage_full_success
+: > "$AUTH_LOG"
+if out="$(run_resolve sql-pipe "" test-token-not-real 2>&1)"; then
+  pass=$((pass + 1))
+else
+  fail=$((fail + 1))
+  echo "FAIL: resolve with GH_TOKEN should succeed"
+  echo "$out" | sed 's/^/    /'
+fi
+if awk -F '\t' '$1 ~ /^https:\/\/api\.github\.com/ && $2 == "none" {missing=1} END {exit missing ? 0 : 1}' "$AUTH_LOG"; then
+  fail=$((fail + 1))
+  echo "FAIL: release API request was not authenticated when GH_TOKEN was set"
+else
+  pass=$((pass + 1))
+fi
+if grep -q 'test-token-not-real' <<<"$out"; then
+  fail=$((fail + 1))
+  echo "FAIL: the repository token leaked into the script output"
+else
+  pass=$((pass + 1))
+fi
+
+# 19. API HTTP errors fail closed with status and message, no credentials shown.
+reset_map
+stage_full_success
+map_remove "https://api.github.com/repos/vmvarela/sql-pipe/releases/latest"
+map_error "https://api.github.com/repos/vmvarela/sql-pipe/releases/latest" 403 \
+  '{"message":"API rate limit exceeded for 203.0.113.7."}'
+: > "$AUTH_LOG"
+if out="$(run_resolve sql-pipe "" test-token-not-real 2>&1)"; then
+  fail=$((fail + 1))
+  echo "FAIL: HTTP 403 from the release API must fail the build"
+  echo "$out" | sed 's/^/    /'
+elif ! grep -q 'HTTP 403' <<<"$out" || ! grep -q 'rate limit' <<<"$out"; then
+  fail=$((fail + 1))
+  echo "FAIL: HTTP 403 error must report the status and API message"
+  echo "$out" | sed 's/^/    /'
+else
+  pass=$((pass + 1))
+fi
+if ! awk -F '\t' '$1 ~ /^https:\/\/api\.github\.com/ && $2 == "token" {seen=1} END {exit seen ? 0 : 1}' "$AUTH_LOG"; then
+  fail=$((fail + 1))
+  echo "FAIL: HTTP error case should still have sent the token"
+else
+  pass=$((pass + 1))
+fi
+if grep -q 'test-token-not-real' <<<"$out"; then
+  fail=$((fail + 1))
+  echo "FAIL: the repository token leaked into API error diagnostics"
+else
+  pass=$((pass + 1))
+fi
 
 # --- report -----------------------------------------------------------------
 
