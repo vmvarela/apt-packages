@@ -15,6 +15,7 @@
 set -euo pipefail
 
 API_BASE="https://api.github.com/repos/vmvarela"
+API_VERSION="2022-11-28"
 SITE_BASE="https://vmvarela.github.io/apt-packages"
 VERSION_RE='^[0-9]+\.[0-9]+\.[0-9]+$'
 
@@ -32,12 +33,38 @@ emit() {
 }
 
 # fetch_release <repo> <tag|latest>: print release JSON.
+# Sends GH_TOKEN when set (CI passes the repository-scoped Actions token) and
+# stays unauthenticated otherwise, for local runs. The token only travels in a
+# request header, never in a URL or output line.
+# Failures report the HTTP status and the API message, not the response body.
 fetch_release() {
-  if [[ "$2" == "latest" ]]; then
-    curl --fail --silent --show-error "${API_BASE}/${1}/releases/latest"
+  local repo="$1" ref="$2" url body status message
+  local -a auth=()
+  if [[ "$ref" == "latest" ]]; then
+    url="${API_BASE}/${repo}/releases/latest"
   else
-    curl --fail --silent --show-error "${API_BASE}/${1}/releases/tags/$2"
+    url="${API_BASE}/${repo}/releases/tags/${ref}"
   fi
+  if [[ -n "${GH_TOKEN:-}" ]]; then
+    auth=(-H "Authorization: Bearer ${GH_TOKEN}")
+  fi
+  body="$(mktemp)"
+  if ! status="$(curl --silent --show-error \
+        -H "Accept: application/vnd.github+json" \
+        -H "X-GitHub-Api-Version: ${API_VERSION}" \
+        ${auth[@]+"${auth[@]}"} \
+        -o "$body" -w '%{http_code}' "$url")"; then
+    rm -f "$body"
+    die "GitHub release API request failed for ${repo} (${ref}): curl could not complete the request."
+  fi
+  if [[ "$status" != 2* ]]; then
+    message="$(jq -r 'if (.message | type) == "string" then .message else "" end' "$body" 2>/dev/null |
+      head -c 300 || true)"
+    rm -f "$body"
+    die "GitHub release API request failed for ${repo} (${ref}): HTTP ${status}${message:+: ${message}}"
+  fi
+  cat "$body"
+  rm -f "$body"
 }
 
 # Validate a release object is the exact stable, non-draft, non-prerelease

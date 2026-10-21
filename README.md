@@ -36,4 +36,8 @@ sudo apt install ghoten
 | `GPG_SIGNING_KEY` | GPG private key (armored) for signing the repository |
 | `GPG_KEY_ID` | Key ID or fingerprint matching `GPG_SIGNING_KEY` |
 
+Release metadata requests use the workflow's repository-scoped `GITHUB_TOKEN`
+(`contents: read`). Local runs work unauthenticated; export `GH_TOKEN` to
+authenticate and avoid GitHub API rate limits.
+
 If `GPG_SIGNING_KEY`/`GPG_KEY_ID` are not set, the build fails and the previously deployed repository remains untouched.
