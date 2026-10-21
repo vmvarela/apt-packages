@@ -1,0 +1,86 @@
+name: APT state shadow
+
+# Manual shadow check only: builds a candidate site from state/ and compares it with the
+# live site. It never deploys to Pages, never writes state/, and is not triggered by
+# repository_dispatch. update.yml remains the publishing workflow.
+
+on:
+  workflow_dispatch:
+    inputs:
+      package:
+        description: "Package whose stable release is the candidate"
+        required: true
+        default: sql-pipe
+        type: choice
+        options:
+          - sql-pipe
+          - ghoten
+      version:
+        description: "Stable release version without v"
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  shadow:
+    name: Build and compare candidate (no publish)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      # Pinned to the full SHA of vmvarela/package-distribution#4 (squash-merged to main).
+      PACKAGE_DISTRIBUTION_SHA: 8cbe59b0244146bca5e556d8ef5afa4eca207d94
+      PACKAGE: ${{ github.event.inputs.package }}
+      VERSION: ${{ github.event.inputs.version }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Check out package-distribution
+        uses: actions/checkout@v7
+        with:
+          repository: vmvarela/package-distribution
+          ref: ${{ env.PACKAGE_DISTRIBUTION_SHA }}
+          path: package-distribution
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - name: Install tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y dpkg-dev gnupg
+
+      - name: Import signing key
+        env:
+          GPG_SIGNING_KEY: ${{ secrets.GPG_SIGNING_KEY }}
+          GPG_KEY_ID: ${{ secrets.GPG_KEY_ID }}
+        run: |
+          set -euo pipefail
+          if [ -z "${GPG_SIGNING_KEY}" ] || [ -z "${GPG_KEY_ID}" ]; then
+            echo "::error::GPG_SIGNING_KEY and GPG_KEY_ID secrets must be configured for the shadow check."
+            exit 1
+          fi
+          echo "${GPG_SIGNING_KEY}" | gpg --batch --import
+          echo "GPG_KEY_ID=${GPG_KEY_ID}" >> "$GITHUB_ENV"
+
+      - name: Build candidate and compare with live site
+        run: bash scripts/shadow-check.sh "$PACKAGE" "$VERSION" package-distribution "$RUNNER_TEMP/shadow"
+
+      - name: Upload shadow result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: apt-state-shadow-${{ env.PACKAGE }}-${{ env.VERSION }}
+          retention-days: 14
+          if-no-files-found: ignore
+          path: |
+            ${{ runner.temp }}/shadow/compare.log
+            ${{ runner.temp }}/shadow/candidate/.complete
+            ${{ runner.temp }}/shadow/candidate/dists
