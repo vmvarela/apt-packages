@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "package": "ghoten",
+  "architectures": {
+    "amd64": [
+      {
+        "version": "1.13.1",
+        "sha256": "19a6bd2dd6d6b4b17fa55c1dbe1741d335ab0921a3d29fb3a9c544889c50be2b",
+        "file": "ghoten_1.13.1_amd64.deb"
+      }
+    ],
+    "arm64": [
+      {
+        "version": "1.13.1",
+        "sha256": "3e687f9ab3e7bd5141ee6e14d153bef8aa80f699962032e982700b35c75157a1",
+        "file": "ghoten_1.13.1_arm64.deb"
+      }
+    ]
+  }
+}
