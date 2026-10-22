@@ -27,6 +27,7 @@ sudo apt install ghoten
 
 - `update.yml` builds the site with the shared `apt-publish.mjs` from `vmvarela/package-distribution`, pinned by `PACKAGE_DISTRIBUTION_SHA`. It resolves the requested or latest stable release for `sql-pipe`, `ghoten` or `damas`, publishes from the GitHub release assets, and deploys to Pages only when the state changes. A no-op version deploys nothing.
 - After a successful deployment the workflow copies the candidate state over `state/` and commits it, so the next run rebuilds every package from the recorded state. Promotion order is verify, deploy, then state.
+- A manual dispatch with `force` set rebuilds and redeploys the current state, for example after a publisher change. The site serves the signing key as both `key.asc` and the documented `key.gpg`.
 - `shadow-state.yml` is a manual (`workflow_dispatch`) check. It builds a candidate site from `state/` with `apt-publish.mjs --shadow`, compares it with the live site using `apt-compare.mjs`, and uploads the result as an artifact. It never deploys to Pages and never writes `state/`. It runs the `package-distribution` checkout pinned by `PACKAGE_DISTRIBUTION_SHA`; update that pin when the contract changes.
 - The shadow check needs `GPG_SIGNING_KEY` and `GPG_KEY_ID` to sign the candidate, the same secrets as `update.yml`.
 - When the requested release equals the state, the publisher reports `noop` and there is no candidate to compare.
