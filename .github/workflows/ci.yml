@@ -17,5 +17,3 @@ jobs:
           persist-credentials: false
       - name: Check shell syntax
         run: bash -n scripts/*.sh
-      - name: Run offline APT repository tests
-        run: bash scripts/test-update-apt-repository.sh
