@@ -2,7 +2,7 @@ name: Update APT Repository
 
 on:
   repository_dispatch:
-    types: [update-sql-pipe, update-ghoten]
+    types: [update-sql-pipe, update-ghoten, update-damas]
   workflow_dispatch:
     inputs:
       package:
@@ -13,9 +13,14 @@ on:
         options:
           - sql-pipe
           - ghoten
+          - damas
       version:
         description: "Release version without v; leave empty to use latest stable"
         required: false
+
+# Publisher contract (docs/receivers.md in vmvarela/package-distribution).
+env:
+  PACKAGE_DISTRIBUTION_SHA: ec0ce2ffdc3406f92b773da9bfade186640d6a57
 
 concurrency:
   group: pages
@@ -29,20 +34,23 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     permissions:
-      contents: read
+      contents: write
       pages: write
       id-token: write
 
     steps:
-      - name: Install tools
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y apt-utils gnupg
-
       - name: Check out repository
         uses: actions/checkout@v7
 
-      - name: Resolve package versions
+      - name: Check out package-distribution
+        uses: actions/checkout@v7
+        with:
+          repository: vmvarela/package-distribution
+          ref: ${{ env.PACKAGE_DISTRIBUTION_SHA }}
+          path: package-distribution
+          persist-credentials: false
+
+      - name: Resolve target and version
         id: vars
         shell: bash
         env:
@@ -56,57 +64,30 @@ jobs:
           case "${EVENT_ACTION:-${INPUT_PACKAGE:-}}" in
             update-sql-pipe|sql-pipe) target="sql-pipe" ;;
             update-ghoten|ghoten) target="ghoten" ;;
+            update-damas|damas) target="damas" ;;
             *) echo "::error::Unknown package update event."; exit 1 ;;
           esac
 
-          bash scripts/update-apt-repository.sh resolve "$target" "${REQUESTED_VERSION:-}"
+          catalog="package-distribution/catalog/${target}.json"
+          repo="$(jq -r '.repo' "$catalog")"
+          version="${REQUESTED_VERSION:-}"
+          version="${version#v}"
+          if [[ -z "$version" ]]; then
+            version="$(gh api "repos/${repo}/releases/latest" --jq .tag_name)"
+            version="${version#v}"
+          fi
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Not a stable release version for ${target}: ${version}"
+            exit 1
+          fi
 
-      - name: Download .deb packages
-        shell: bash
-        env:
-          TARGET: ${{ steps.vars.outputs.target }}
-          SQL_PIPE_VERSION: ${{ steps.vars.outputs.sql_pipe_version }}
-          GHOTEN_VERSION: ${{ steps.vars.outputs.ghoten_version }}
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          bash scripts/update-apt-repository.sh download "$TARGET" "$SQL_PIPE_VERSION" "$GHOTEN_VERSION"
+          {
+            echo "target=${target}"
+            echo "catalog=${catalog}"
+            echo "version=${version}"
+          } >> "$GITHUB_OUTPUT"
 
-          find site/pool -maxdepth 5 -type f -print | sort
-
-      - name: Generate APT index
-        run: |
-          cd site
-
-          # Generate one combined index for every package in the shared repository.
-          apt-ftparchive packages pool/ > /tmp/Packages.all
-          echo "==> Packages:"
-          cat /tmp/Packages.all
-
-          # Split into per-arch directories
-          for APT_ARCH in amd64 arm64 armhf i386; do
-            mkdir -p "dists/stable/main/binary-${APT_ARCH}"
-            awk -v arch="${APT_ARCH}" \
-              'BEGIN{RS="";ORS="\n\n"} $0 ~ "Architecture: "arch"(\n|$)"' \
-              /tmp/Packages.all \
-              | sed 's/[[:space:]]*$//' > "dists/stable/main/binary-${APT_ARCH}/Packages"
-            gzip -k "dists/stable/main/binary-${APT_ARCH}/Packages"
-          done
-
-          # Generate Release file
-          apt-ftparchive \
-            -o APT::FTPArchive::Release::Origin=vmvarela \
-            -o APT::FTPArchive::Release::Label=vmvarela \
-            -o APT::FTPArchive::Release::Suite=stable \
-            -o APT::FTPArchive::Release::Codename=stable \
-            -o APT::FTPArchive::Release::Architectures="amd64 arm64 armhf i386" \
-            -o APT::FTPArchive::Release::Components=main \
-            -o "APT::FTPArchive::Release::Description=vmvarela APT repository" \
-            release dists/stable > dists/stable/Release
-          echo "==> Release:"
-          cat dists/stable/Release
-
-      - name: Sign Release
+      - name: Import signing key
         env:
           GPG_SIGNING_KEY: ${{ secrets.GPG_SIGNING_KEY }}
           GPG_KEY_ID: ${{ secrets.GPG_KEY_ID }}
@@ -116,17 +97,32 @@ jobs:
             exit 1
           fi
           echo "${GPG_SIGNING_KEY}" | gpg --batch --import
-          gpg --armor --export "${GPG_KEY_ID}" > site/key.gpg
-          gpg --batch --yes --pinentry-mode loopback \
-            --default-key "${GPG_KEY_ID}" \
-            --detach-sign --armor \
-            -o site/dists/stable/Release.gpg site/dists/stable/Release
-          gpg --batch --yes --pinentry-mode loopback \
-            --default-key "${GPG_KEY_ID}" \
-            --clearsign \
-            -o site/dists/stable/InRelease site/dists/stable/Release
+
+      - name: Publish site
+        id: publish
+        shell: bash
+        env:
+          GPG_KEY_ID: ${{ secrets.GPG_KEY_ID }}
+          TARGET: ${{ steps.vars.outputs.target }}
+          VERSION: ${{ steps.vars.outputs.version }}
+        run: |
+          set -euo pipefail
+          node package-distribution/scripts/apt-publish.mjs \
+            --catalog "package-distribution/catalog/${TARGET}.json" \
+            --version "${VERSION}" \
+            --source github \
+            --out site \
+            --state state \
+            --release-date "$(date -u +%F)"
+          if [ -f site/.complete ]; then
+            echo "deploy=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "No change for ${TARGET} ${VERSION}; nothing to deploy."
+            echo "deploy=false" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Create index page
+        if: steps.publish.outputs.deploy == 'true'
         run: |
           cat > site/index.html << 'HTML'
           <!DOCTYPE html>
@@ -143,16 +139,38 @@ jobs:
           sudo apt update
           sudo apt install sql-pipe
           sudo apt install ghoten
+          sudo apt install damas
           </pre>
           </body>
           </html>
           HTML
 
       - name: Upload Pages artifact
+        if: steps.publish.outputs.deploy == 'true'
         uses: actions/upload-pages-artifact@v3
         with:
           path: site/
 
       - name: Deploy to GitHub Pages
+        if: steps.publish.outputs.deploy == 'true'
         id: deployment
         uses: actions/deploy-pages@v4
+
+      - name: Record durable state
+        if: steps.publish.outputs.deploy == 'true'
+        shell: bash
+        env:
+          TARGET: ${{ steps.vars.outputs.target }}
+          VERSION: ${{ steps.vars.outputs.version }}
+        run: |
+          set -euo pipefail
+          rsync -a --delete site.state/ state/
+          git add state
+          if git diff --cached --quiet; then
+            echo "State already current."
+            exit 0
+          fi
+          git -c user.name="github-actions[bot]" \
+              -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+              commit -m "chore(state): record ${TARGET} ${VERSION}"
+          git push origin HEAD:main
