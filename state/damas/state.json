@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "package": "damas",
+  "architectures": {
+    "amd64": [
+      {
+        "version": "0.1.10",
+        "sha256": "7860702956fa8869bc201af417bad8c850b8bee87ef72662cf19ef3124e58f34",
+        "file": "damas_0.1.10_amd64.deb"
+      }
+    ],
+    "arm64": [
+      {
+        "version": "0.1.10",
+        "sha256": "b2739e8c8bfeaae5b681c17cfba0c15c130f92b503b30f8d919f20f2d420bc15",
+        "file": "damas_0.1.10_arm64.deb"
+      }
+    ],
+    "armhf": [
+      {
+        "version": "0.1.10",
+        "sha256": "73dfffac6e7f753a7da33b8c73c852261151a3c5332034d360d4428d8097c9ea",
+        "file": "damas_0.1.10_armhf.deb"
+      }
+    ],
+    "i386": [
+      {
+        "version": "0.1.10",
+        "sha256": "f4d4434d2f20d5b18152f6f8c9a729e627b9b3c094ead7e3623eca0e3599af35",
+        "file": "damas_0.1.10_i386.deb"
+      }
+    ]
+  }
+}
