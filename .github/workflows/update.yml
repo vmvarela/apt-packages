@@ -17,10 +17,15 @@ on:
       version:
         description: "Release version without v; leave empty to use latest stable"
         required: false
+      force:
+        description: "Rebuild and deploy even when the state already matches the release"
+        required: false
+        default: false
+        type: boolean
 
 # Publisher contract (docs/receivers.md in vmvarela/package-distribution).
 env:
-  PACKAGE_DISTRIBUTION_SHA: ec0ce2ffdc3406f92b773da9bfade186640d6a57
+  PACKAGE_DISTRIBUTION_SHA: 7463ec1333e917731ee826c3d9bcd88ebd987a2b
 
 concurrency:
   group: pages
@@ -105,16 +110,21 @@ jobs:
           GPG_KEY_ID: ${{ secrets.GPG_KEY_ID }}
           TARGET: ${{ steps.vars.outputs.target }}
           VERSION: ${{ steps.vars.outputs.version }}
+          FORCE: ${{ github.event.inputs.force }}
         run: |
           set -euo pipefail
+          extra=()
+          if [ "${FORCE:-false}" = "true" ]; then extra+=(--force); fi
           node package-distribution/scripts/apt-publish.mjs \
             --catalog "package-distribution/catalog/${TARGET}.json" \
             --version "${VERSION}" \
             --source github \
             --out site \
             --state state \
-            --release-date "$(date -u +%F)"
+            --release-date "$(date -u +%F)" "${extra[@]}"
           if [ -f site/.complete ]; then
+            # key.gpg is the documented download path; the publisher exports key.asc.
+            cp site/key.asc site/key.gpg
             echo "deploy=true" >> "$GITHUB_OUTPUT"
           else
             echo "No change for ${TARGET} ${VERSION}; nothing to deploy."
