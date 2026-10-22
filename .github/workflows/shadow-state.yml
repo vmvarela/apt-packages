@@ -29,7 +29,7 @@ jobs:
     timeout-minutes: 30
     env:
       # Pinned to the full SHA of vmvarela/package-distribution#6 (squash-merged to main).
-      PACKAGE_DISTRIBUTION_SHA: 4c3442caedd1eff5cf12f1e15f0bc392240c95da
+      PACKAGE_DISTRIBUTION_SHA: 71a9ba0d19130d1423598ceb83f018a90330e86d
       PACKAGE: ${{ github.event.inputs.package }}
       VERSION: ${{ github.event.inputs.version }}
 
