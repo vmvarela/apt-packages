@@ -22,6 +22,8 @@ on:
         required: false
         default: false
         type: boolean
+  schedule:
+    - cron: "17 5 * * *"
 
 # Publisher contract (docs/receivers.md in vmvarela/package-distribution).
 env:
@@ -56,6 +58,7 @@ jobs:
           persist-credentials: false
 
       - name: Resolve target and version
+        if: github.event_name != 'schedule'
         id: vars
         shell: bash
         env:
@@ -111,30 +114,73 @@ jobs:
           TARGET: ${{ steps.vars.outputs.target }}
           VERSION: ${{ steps.vars.outputs.version }}
           FORCE: ${{ github.event.inputs.force }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           extra=()
           if [ "${FORCE:-false}" = "true" ]; then extra+=(--force); fi
-          node package-distribution/scripts/apt-publish.mjs \
-            --catalog "package-distribution/catalog/${TARGET}.json" \
-            --version "${VERSION}" \
-            --source github \
-            --out site \
-            --state state \
-            --release-date "$(date -u +%F)" "${extra[@]}"
-          if [ -f site/.complete ]; then
-            # key.gpg is the documented download path; the publisher exports key.asc.
-            cp site/key.asc site/key.gpg
+
+          # Scheduled runs reconcile every package this channel declares; dispatch
+          # and manual runs publish the single target resolved by the step above.
+          if [ "${GITHUB_EVENT_NAME:-}" = "schedule" ]; then
+            packages=()
+            for catalog in package-distribution/catalog/*.json; do
+              if jq -e '.channels.apt' "$catalog" >/dev/null; then
+                packages+=("$(basename "$catalog" .json)")
+              fi
+            done
+          else
+            packages=("${TARGET}")
+          fi
+
+          state=state
+          dir=""
+          for pkg in "${packages[@]}"; do
+            if [ "${GITHUB_EVENT_NAME:-}" = "schedule" ]; then
+              repo="$(jq -r '.repo' "package-distribution/catalog/${pkg}.json")"
+              version="$(gh api "repos/${repo}/releases/latest" --jq .tag_name)"
+              version="${version#v}"
+            else
+              version="${VERSION}"
+            fi
+            if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "::error::Not a stable release version for ${pkg}: ${version}"
+              exit 1
+            fi
+
+            out="site-${pkg}"
+            node package-distribution/scripts/apt-publish.mjs \
+              --catalog "package-distribution/catalog/${pkg}.json" \
+              --version "${version}" \
+              --source github \
+              --out "${out}" \
+              --state "${state}" \
+              --release-date "$(date -u +%F)" "${extra[@]}"
+            if [ -f "${out}/.complete" ]; then
+              # key.gpg is the documented download path; the publisher exports key.asc.
+              cp "${out}/key.asc" "${out}/key.gpg"
+              dir="${out}"
+              state="${out}.state"
+            else
+              echo "No change for ${pkg} ${version}; nothing to publish."
+            fi
+          done
+
+          # The last directory that produced .complete was rebuilt from the chained
+          # state, so it already contains every earlier package update.
+          if [ -n "${dir}" ]; then
+            echo "dir=${dir}" >> "$GITHUB_OUTPUT"
             echo "deploy=true" >> "$GITHUB_OUTPUT"
           else
-            echo "No change for ${TARGET} ${VERSION}; nothing to deploy."
+            echo "No package changed; nothing to deploy."
+            echo "dir=" >> "$GITHUB_OUTPUT"
             echo "deploy=false" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Create index page
         if: steps.publish.outputs.deploy == 'true'
         run: |
-          cat > site/index.html << 'HTML'
+          cat > "${{ steps.publish.outputs.dir }}/index.html" << 'HTML'
           <!DOCTYPE html>
           <html lang="en">
           <head><meta charset="utf-8"><title>vmvarela APT repository</title></head>
@@ -159,7 +205,7 @@ jobs:
         if: steps.publish.outputs.deploy == 'true'
         uses: actions/upload-pages-artifact@v3
         with:
-          path: site/
+          path: ${{ steps.publish.outputs.dir }}/
 
       - name: Deploy to GitHub Pages
         if: steps.publish.outputs.deploy == 'true'
@@ -174,13 +220,15 @@ jobs:
           VERSION: ${{ steps.vars.outputs.version }}
         run: |
           set -euo pipefail
-          rsync -a --delete site.state/ state/
+          rsync -a --delete "${{ steps.publish.outputs.dir }}.state/" state/
           git add state
           if git diff --cached --quiet; then
             echo "State already current."
             exit 0
           fi
+          message="chore(state): record ${TARGET} ${VERSION}"
+          if [ "${GITHUB_EVENT_NAME:-}" = "schedule" ]; then message="chore(state): reconcile with the releases"; fi
           git -c user.name="github-actions[bot]" \
               -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
-              commit -m "chore(state): record ${TARGET} ${VERSION}"
+              commit -m "${message}"
           git push origin HEAD:main
