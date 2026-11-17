@@ -4,12 +4,22 @@
   "architectures": {
     "amd64": [
       {
+        "version": "0.27.1",
+        "sha256": "0169bea58fa965a2e88f0c3b1fca941ecf0382eb7b43db2c31e735595933b641",
+        "file": "sql-pipe_0.27.1_amd64.deb"
+      },
+      {
         "version": "0.27.0",
         "sha256": "68c761e657fd9a9add00a9504b5a409201fe684127b6b898efd7d3433b41219a",
         "file": "sql-pipe_0.27.0_amd64.deb"
       }
     ],
     "arm64": [
+      {
+        "version": "0.27.1",
+        "sha256": "5e202e061af8f65912380627adc85aa289cf7cb02646269e433430e9c98ba3c8",
+        "file": "sql-pipe_0.27.1_arm64.deb"
+      },
       {
         "version": "0.27.0",
         "sha256": "cd9ce8303db6eef38ddd6404d97dfc2adde77227ba854399cfd4cd0b34a04030",
@@ -18,12 +28,22 @@
     ],
     "armhf": [
       {
+        "version": "0.27.1",
+        "sha256": "318e0e95a91666073f730d25862743931fca2b8eed9931c92b7ed9e88d6f2f06",
+        "file": "sql-pipe_0.27.1_armhf.deb"
+      },
+      {
         "version": "0.27.0",
         "sha256": "2828003de2f5cea50a53af1b787c2a1b61a331ea744a75e7ae8dbdb1e8f6ab83",
         "file": "sql-pipe_0.27.0_armhf.deb"
       }
     ],
     "i386": [
+      {
+        "version": "0.27.1",
+        "sha256": "b3b4bcdb5a60c7b6401262d2757415ad9331735a8be799a4999889281b35befe",
+        "file": "sql-pipe_0.27.1_i386.deb"
+      },
       {
         "version": "0.27.0",
         "sha256": "feec922073e3c11b389d50f73a8c51aa926f44837947a2848217e6661d4e30c3",
