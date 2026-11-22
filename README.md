@@ -20,12 +20,13 @@ sudo apt install ghoten
 | [sql-pipe](https://github.com/vmvarela/sql-pipe) | Read CSV from stdin, query with SQL, write CSV to stdout |
 | [ghoten](https://github.com/vmvarela/ghoten) | Reproducible OpenTofu distribution with Smart Refresh and an ORAS backend for OCI state |
 | [damas](https://github.com/vmvarela/damas) | Local-first task board for the terminal |
+| [zepp-life](https://github.com/vmvarela/zepp-life) | Sync Zepp Life activity and body measurements into a local SQLite database |
 
 ## Durable state and shadow check
 
 `state/<package>/state.json` (schema_version 1) and `state/<package>/pool/<file>.deb` hold the retained packages for the contract in `docs/receivers.md` section 3a of vmvarela/package-distribution (merged as 8cbe59b): at most two entries per architecture, newest first, each with `version`, `sha256` and `file`. The state was bootstrapped from the live site and the GitHub releases, and the SHA-256 of every `.deb` matches the release `sha256sums.txt`.
 
-- `update.yml` builds the site with the shared `apt-publish.mjs` from `vmvarela/package-distribution`, pinned by `PACKAGE_DISTRIBUTION_SHA`. It resolves the requested or latest stable release for `sql-pipe`, `ghoten` or `damas`, publishes from the GitHub release assets, and deploys to Pages only when the state changes. A no-op version deploys nothing.
+- `update.yml` builds the site with the shared `apt-publish.mjs` from `vmvarela/package-distribution`, pinned by `PACKAGE_DISTRIBUTION_SHA`. It resolves the requested or latest stable release for `sql-pipe`, `ghoten`, `damas` or `zepp-life`, publishes from the GitHub release assets, and deploys to Pages only when the state changes. A no-op version deploys nothing.
 - After a successful deployment the workflow copies the candidate state over `state/` and commits it, so the next run rebuilds every package from the recorded state. Promotion order is verify, deploy, then state.
 - A manual dispatch with `force` set rebuilds and redeploys the current state, for example after a publisher change. The site serves the signing key as both `key.asc` and the documented `key.gpg`.
 - `shadow-state.yml` is a manual (`workflow_dispatch`) check. It builds a candidate site from `state/` with `apt-publish.mjs --shadow`, compares it with the live site using `apt-compare.mjs`, and uploads the result as an artifact. It never deploys to Pages and never writes `state/`. It runs the `package-distribution` checkout pinned by `PACKAGE_DISTRIBUTION_SHA`; update that pin when the contract changes.
