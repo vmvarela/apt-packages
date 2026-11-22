@@ -29,7 +29,7 @@ on:
 
 # Publisher contract (docs/receivers.md in vmvarela/package-distribution).
 env:
-  PACKAGE_DISTRIBUTION_SHA: beec0beb2a6d4cfb2252c9a37b1d939a959bae4d
+  PACKAGE_DISTRIBUTION_SHA: 5bf2717135b4c5018ec2897c9c7ad6d2bf343d3a
 
 concurrency:
   group: pages
