@@ -2,7 +2,7 @@ name: Update APT Repository
 
 on:
   repository_dispatch:
-    types: [update-sql-pipe, update-ghoten, update-damas]
+    types: [update-sql-pipe, update-ghoten, update-damas, update-ztd]
   workflow_dispatch:
     inputs:
       package:
@@ -14,6 +14,7 @@ on:
           - sql-pipe
           - ghoten
           - damas
+          - ztd
       version:
         description: "Release version without v; leave empty to use latest stable"
         required: false
@@ -27,7 +28,7 @@ on:
 
 # Publisher contract (docs/receivers.md in vmvarela/package-distribution).
 env:
-  PACKAGE_DISTRIBUTION_SHA: 7463ec1333e917731ee826c3d9bcd88ebd987a2b
+  PACKAGE_DISTRIBUTION_SHA: beec0beb2a6d4cfb2252c9a37b1d939a959bae4d
 
 concurrency:
   group: pages
@@ -73,6 +74,7 @@ jobs:
             update-sql-pipe|sql-pipe) target="sql-pipe" ;;
             update-ghoten|ghoten) target="ghoten" ;;
             update-damas|damas) target="damas" ;;
+            update-ztd|ztd) target="ztd" ;;
             *) echo "::error::Unknown package update event."; exit 1 ;;
           esac
 
