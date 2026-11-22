@@ -2,7 +2,7 @@ name: Update APT Repository
 
 on:
   repository_dispatch:
-    types: [update-sql-pipe, update-ghoten, update-damas, update-ztd]
+    types: [update-sql-pipe, update-ghoten, update-damas, update-ztd, update-zepp-life]
   workflow_dispatch:
     inputs:
       package:
@@ -15,6 +15,7 @@ on:
           - ghoten
           - damas
           - ztd
+          - zepp-life
       version:
         description: "Release version without v; leave empty to use latest stable"
         required: false
@@ -75,6 +76,7 @@ jobs:
             update-ghoten|ghoten) target="ghoten" ;;
             update-damas|damas) target="damas" ;;
             update-ztd|ztd) target="ztd" ;;
+            update-zepp-life|zepp-life) target="zepp-life" ;;
             *) echo "::error::Unknown package update event."; exit 1 ;;
           esac
 
@@ -198,6 +200,7 @@ jobs:
           sudo apt install sql-pipe
           sudo apt install ghoten
           sudo apt install damas
+          sudo apt install zepp-life
           </pre>
           </body>
           </html>
