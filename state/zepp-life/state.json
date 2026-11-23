@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "package": "zepp-life",
+  "architectures": {
+    "amd64": [
+      {
+        "version": "0.1.0",
+        "sha256": "d2c024cc6b7491d0ce702c5c1ebb3cced3161ef14f1a282b4be9ec055b09a74a",
+        "file": "zepp-life_0.1.0_amd64.deb"
+      }
+    ],
+    "arm64": [
+      {
+        "version": "0.1.0",
+        "sha256": "35846755339497f47c4facd6c703d055b686729f18776b18c3a87cb1bc00d5c0",
+        "file": "zepp-life_0.1.0_arm64.deb"
+      }
+    ]
+  }
+}
