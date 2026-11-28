@@ -4,50 +4,50 @@
   "architectures": {
     "amd64": [
       {
+        "version": "0.4.2",
+        "sha256": "86cbdbde56bc431263050841bb98bdbdc88ec11d462886be55d4e82692fa1671",
+        "file": "ztd_0.4.2_amd64.deb"
+      },
+      {
         "version": "0.4.1",
         "sha256": "92af548af01f172a2ab2cffad7c5f552c53b642703b54bfd1e4e1a730ef2e989",
         "file": "ztd_0.4.1_amd64.deb"
-      },
-      {
-        "version": "0.4.0",
-        "sha256": "e46e8727977ed574b91d1ce46e4f60bb8dcd3e0d2e992d1a4f2345997fc343ae",
-        "file": "ztd_0.4.0_amd64.deb"
       }
     ],
     "arm64": [
       {
+        "version": "0.4.2",
+        "sha256": "d4a51dfda47c0e1bde86c406f473a2731cb1d6fad18d53c81bfacfa940d84418",
+        "file": "ztd_0.4.2_arm64.deb"
+      },
+      {
         "version": "0.4.1",
         "sha256": "35c4d0dc9b31f0c05dac334beb59e29eb0e1a9ee45aa90e42c73801eeb71869f",
         "file": "ztd_0.4.1_arm64.deb"
-      },
-      {
-        "version": "0.4.0",
-        "sha256": "d60e23689cce82ca45b79e4d8d4d31cb90782c0ebf9d45ca03d68436af910876",
-        "file": "ztd_0.4.0_arm64.deb"
       }
     ],
     "armhf": [
       {
+        "version": "0.4.2",
+        "sha256": "2fd6ac4e93dc7c2797452ab343338926514f7108c9b340befaf1d8e04dd1f216",
+        "file": "ztd_0.4.2_armhf.deb"
+      },
+      {
         "version": "0.4.1",
         "sha256": "6e4533dc5dd92faf25b85e944b88fe5dd612fa50f0571ec7b909985a42b14f17",
         "file": "ztd_0.4.1_armhf.deb"
-      },
-      {
-        "version": "0.4.0",
-        "sha256": "c526949996e96d9cb2b49650452786e2401f13f901810a0778b9edd069fd071a",
-        "file": "ztd_0.4.0_armhf.deb"
       }
     ],
     "i386": [
       {
+        "version": "0.4.2",
+        "sha256": "78c8f29a9a6538f6d20230cfc7026f29a69d32f85e4445b08e8295174b9b7a72",
+        "file": "ztd_0.4.2_i386.deb"
+      },
+      {
         "version": "0.4.1",
         "sha256": "6706f4243bcbe2fd1e07de16d7574043a27b70376df0dd6807b3e89c4d8cf559",
         "file": "ztd_0.4.1_i386.deb"
-      },
-      {
-        "version": "0.4.0",
-        "sha256": "d44d8d7293b64aa9622d51736bd4c0c0be80a3752689867e160290761e47a25c",
-        "file": "ztd_0.4.0_i386.deb"
       }
     ]
   }
